@@ -1,0 +1,56 @@
+
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+BasedOnStyle: WebKit
+Language: Cpp
+
+# 不使用制表符
+UseTab: Never
+
+# 缩进宽度
+IndentWidth: 4
+
+BreakBeforeBraces: Custom
+# 大括号换行，只有当BreakBeforeBraces设置为Custom时才有效
+BraceWrapping:
+  AfterControlStatement:    true
+  AfterFunction:            true
+  AfterClass:               true
+  AfterStruct:              true
+  AfterEnum:                true
+  AfterCaseLabel:           true  # case  新起一行
+  BeforeCatch:              true  # catch 新起一行
+  BeforeElse:               true  # else  新起一行
+  BeforeLambdaBody:         true
+
+# 尾随的注释对齐
+AlignTrailingComments: true
+
+# 每行最多字符数，0表示没有字符数限制
+ColumnLimit: 150
+
+# 禁止函数定义与函数名在同一行
+AllowShortFunctionsOnASingleLine: false
+
+# template<typename T>之后换行
+AlwaysBreakTemplateDeclarations: true
+
+# 构造函数初始值设定项换行样式
+BreakConstructorInitializers: BeforeColon
+
+# 继承列表样式
+BreakInheritanceList: AfterComma
+
+# 对齐连续的多行赋值
+AlignConsecutiveAssignments: true
+
+# 自动补充namespace注释
+FixNamespaceComments: true
+
+# 定义之间空一行，函数与函数之间，类与类之间等
+SeparateDefinitionBlocks : Always
+# 定义之间的空行最多为一行
+MaxEmptyLinesToKeep: 1
+
+# 宏的换行符左对齐
+AlignEscapedNewlines: Left

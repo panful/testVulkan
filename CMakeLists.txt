@@ -1,0 +1,26 @@
+cmake_minimum_required (VERSION 3.12)
+
+project ("VulkanProject")
+
+set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_CURRENT_SOURCE_DIR}/target_debug)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/target_release)
+
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(Vulkan)
+
+if(NOT Vulkan_FOUND)
+    message(FATAL_ERROR "Vulkan not found")
+else()
+    message("------------------------------------------------------")
+    message("Vulkan_INCLUDE_DIRS: ${Vulkan_INCLUDE_DIRS}")
+    message(" Vulkan_INCLUDE_DIR: ${Vulkan_INCLUDE_DIR}")
+    message("     Vulkan_LIBRARY: ${Vulkan_LIBRARY}")
+    message("   Vulkan_LIBRARIES: ${Vulkan_LIBRARIES}")
+    message("------------------------------------------------------")
+endif()
+
+add_subdirectory(sources)
