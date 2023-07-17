@@ -16,6 +16,7 @@
 #define GLFW_INCLUDE_VULKAN // 定义这个宏之后 glfw3.h 文件就会包含 Vulkan 的头文件
 #include <GLFW/glfw3.h>
 
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <set>
@@ -671,6 +672,49 @@ private:
     /// @details 在 Vulkan 中几乎不允许对图形管线进行动态设置，也就意味着每一种状态都需要提前创建一个图形管线
     void CreateGraphicsPipeline() const noexcept
     {
+        auto vertShaderCode = ReadFile("resources/shaders/vert.spv");
+        auto fragShaderCode = ReadFile("resources/shaders/frag.spv");
+
+        VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+        vertShaderStageInfo.sType                           = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage                           = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module                          = vertShaderModule;
+        vertShaderStageInfo.pName                           = "main";  // 指定调用的着色器函数，同一份代码可以实现多个着色器
+        vertShaderStageInfo.pSpecializationInfo             = nullptr; // 设置着色器常量
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+        fragShaderStageInfo.sType                           = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage                           = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module                          = fragShaderModule;
+        fragShaderStageInfo.pName                           = "main";
+        fragShaderStageInfo.pSpecializationInfo             = nullptr;
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+        vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+        vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+    }
+
+    /// @brief 使用着色器字节码数组创建 VkShaderModule 对象
+    /// @param code 
+    /// @return 
+    VkShaderModule CreateShaderModule(const std::vector<char>& code) const
+    {
+        VkShaderModuleCreateInfo createInfo = {};
+        createInfo.sType                    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize                 = code.size();
+        createInfo.pCode                    = reinterpret_cast<const uint32_t*>(code.data());
+
+        VkShaderModule shaderModule;
+        if (VK_SUCCESS != vkCreateShaderModule(m_device, &createInfo, nullptr, &shaderModule))
+        {
+            throw std::runtime_error("failed to create shader module");
+        }
+
+        return shaderModule;
     }
 
 private:
@@ -723,6 +767,25 @@ private:
         {
             func(instance, callback, pAllocator);
         }
+    }
+
+    /// @brief 读取二进制着色器文件
+    /// @param fileName
+    /// @return
+    static std::vector<char> ReadFile(const std::string& fileName)
+    {
+        std::ifstream file(fileName, std::ios::ate | std::ios::binary);
+        if (!file.is_open())
+        {
+            throw std::runtime_error("failed to open file: " + fileName);
+        }
+
+        size_t fileSize = static_cast<size_t>(file.tellg());
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+        return buffer;
     }
 
 private:
