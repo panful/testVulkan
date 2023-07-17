@@ -22,8 +22,13 @@
 #include <stdexcept>
 #include <vector>
 
+constexpr uint32_t WIDTH  = 800;
+constexpr uint32_t HEIGHT = 600;
+
 // 需要开启的校验层的名称
 const std::vector<const char*> g_validationLayers = { "VK_LAYER_KHRONOS_validation" };
+// 交换链扩展
+const std::vector<const char*> g_deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 // 是否启用校验层
 #ifdef NDEBUG
@@ -41,6 +46,14 @@ struct QueueFamilyIndices
     {
         return graphicsFamily.has_value() && presentFamily.has_value();
     }
+};
+
+/// @brief 交换链属性信息
+struct SwapChainSupportDetails
+{
+    VkSurfaceCapabilitiesKHR capabilities {};
+    std::vector<VkSurfaceFormatKHR> foramts;
+    std::vector<VkPresentModeKHR> presentModes;
 };
 
 class HelloTriangleApplication
@@ -67,7 +80,7 @@ private:
         // 禁止窗口大小的改变
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        m_window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
+        m_window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
     }
 
     void InitVulkan()
@@ -77,6 +90,7 @@ private:
         CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
+        CreateSwapChain();
     }
 
     void MainLoop() const noexcept
@@ -89,18 +103,15 @@ private:
 
     void Cleanup() noexcept
     {
+        vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+        vkDestroyDevice(m_device, nullptr);
+
         if (g_enableValidationLayers)
         {
             DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
         }
 
-        // 清理逻辑设备
-        vkDestroyDevice(m_device, nullptr);
-
-        // 清理表面对象，必须在 Vulkan 实例清理之前
-        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-
-        // 程序结束前清理 Vulkan 实例
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr); // 清理表面对象，必须在 Vulkan 实例清理之前
         vkDestroyInstance(m_instance, nullptr);
 
         glfwDestroyWindow(m_window);
@@ -296,8 +307,17 @@ private:
     /// @return
     bool IsDeviceSuitable(const VkPhysicalDevice device) const noexcept
     {
-        auto indices = FindQueueFamilies(device);
-        return indices.IsComplete();
+        auto indices             = FindQueueFamilies(device);
+        auto extensionsSupported = CheckDeviceExtensionSupported(device);
+
+        bool swapChainAdequate { false };
+        if (extensionsSupported)
+        {
+            auto swapChainSupport = QuerySwapChainSupport(device);
+            swapChainAdequate     = !swapChainSupport.foramts.empty() & !swapChainSupport.presentModes.empty();
+        }
+
+        return indices.IsComplete() && extensionsSupported && swapChainAdequate;
     }
 
     /// @brief 查找满足需求的队列族
@@ -362,12 +382,13 @@ private:
         // 指定应用程序使用的设备特性（例如几何着色器）
         VkPhysicalDeviceFeatures deviceFeatures = {};
 
-        VkDeviceCreateInfo createInfo    = {};
-        createInfo.sType                 = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.queueCreateInfoCount  = static_cast<uint32_t>(queueCreateInfos.size());
-        createInfo.pQueueCreateInfos     = queueCreateInfos.data();
-        createInfo.pEnabledFeatures      = &deviceFeatures;
-        createInfo.enabledExtensionCount = 0;
+        VkDeviceCreateInfo createInfo      = {};
+        createInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.queueCreateInfoCount    = static_cast<uint32_t>(queueCreateInfos.size());
+        createInfo.pQueueCreateInfos       = queueCreateInfos.data();
+        createInfo.pEnabledFeatures        = &deviceFeatures;
+        createInfo.enabledExtensionCount   = static_cast<uint32_t>(g_deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = g_deviceExtensions.data();
 
         // 根据需要对设备和 Vulkan 实例使用相同的校验层
         if (g_enableValidationLayers)
@@ -403,6 +424,210 @@ private:
         {
             throw std::runtime_error("failed to create window surface");
         }
+    }
+
+    /// @brief 检测所需的扩展是否支持
+    /// @param device
+    /// @return
+    bool CheckDeviceExtensionSupported(const VkPhysicalDevice device) const noexcept
+    {
+        uint32_t extensionCount { 0 };
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+        std::set<std::string> requiredExtensions(std::begin(g_deviceExtensions), std::end(g_deviceExtensions));
+
+        for (const auto& extension : availableExtensions)
+        {
+            requiredExtensions.erase(extension.extensionName);
+        }
+
+        // 如果为空，则支持
+        return requiredExtensions.empty();
+    }
+
+    /// @brief 查询交换链支持的细节信息
+    /// @param device
+    /// @return
+    SwapChainSupportDetails QuerySwapChainSupport(const VkPhysicalDevice device) const noexcept
+    {
+        SwapChainSupportDetails details;
+
+        // 查询基础表面特性
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_surface, &details.capabilities);
+
+        // 查询表面支持的格式
+        uint32_t formatCount { 0 };
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
+        if (0 != formatCount)
+        {
+            details.foramts.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, details.foramts.data());
+        }
+
+        // 查询表面支持的呈现模式
+        uint32_t presentModeCount { 0 };
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, nullptr);
+        if (0 != presentModeCount)
+        {
+            details.presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &presentModeCount, details.presentModes.data());
+        }
+
+        return details;
+    }
+
+    /// @brief 选择合适的表面格式
+    /// @param availableFormats
+    /// @return
+    VkSurfaceFormatKHR ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) const noexcept
+    {
+        // VkSurfaceFormatKHR 结构都包含一个 format 和一个 colorSpace 成员
+        // format 成员变量指定色彩通道和类型
+        // colorSpace 成员描述 SRGB 颜色空间是否通过 VK_COLOR_SPACE_SRGB_NONLINEAR_KHR 标志支持
+        // 在较早版本的规范中，这个标志名为 VK_COLORSPACE_SRGB_NONLINEAR_KHR
+
+        // 表面没有自己的首选格式，直接返回指定的格式
+        if (1 == availableFormats.size() && availableFormats.front().format == VK_FORMAT_UNDEFINED)
+        {
+            return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+        }
+
+        // 遍历格式列表，如果想要的格式存在则直接返回
+        for (const auto& availableFormat : availableFormats)
+        {
+            if (VK_FORMAT_B8G8R8A8_UNORM == availableFormat.format && VK_COLOR_SPACE_SRGB_NONLINEAR_KHR == availableFormat.colorSpace)
+            {
+                return availableFormat;
+            }
+        }
+
+        // 如果以上两种方式都失效，通过“优良”进行打分排序，大多数情况下会选择第一个格式作为理想的选择
+        return availableFormats.front();
+    }
+
+    /// @brief 查找最佳的可用呈现模式，模式是非常重要的，因为它代表了在屏幕呈现图像的条件
+    /// @param availablePresentModes
+    /// @return
+    VkPresentModeKHR ChooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) const noexcept
+    {
+        // 以下4种模式可以使用
+        // 1.VK_PRESENT_MODE_IMMEDIATE_KHR: 应用程序提交的图像被立即传输到屏幕呈现，这种模式可能会造成撕裂效果。
+        // 2.VK_PRESENT_MODE_FIFO_KHR:
+        // 交换链被看作一个队列，当显示内容需要刷新的时候，显示设备从队列的前面获取图像，并且程序将渲染完成的图像插入队列的后面。
+        // 如果队列是满的程序会等待。这种规模与视频游戏的垂直同步很类似。显示设备的刷新时刻被成为“垂直中断”。
+        // 3.VK_PRESENT_MODE_FIFO_RELAXED_KHR: 该模式与上一个模式略有不同的地方为，如果应用程序存在延迟，即接受最后一个垂直同步信号时队列空了，
+        // 将不会等待下一个垂直同步信号，而是将图像直接传送。这样做可能导致可见的撕裂效果。
+        // 4.VK_PRESENT_MODE_MAILBOX_KHR: 这是第二种模式的变种。当交换链队列满的时候，选择新的替换旧的图像，从而替代阻塞应用程序的情形。
+        // 这种模式通常用来实现三重缓冲区，与标准的垂直同步双缓冲相比，它可以有效避免延迟带来的撕裂效果。
+
+        VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
+
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (VK_PRESENT_MODE_MAILBOX_KHR == availablePresentMode)
+            {
+                return availablePresentMode;
+            }
+            else if (VK_PRESENT_MODE_IMMEDIATE_KHR == availablePresentMode)
+            {
+                bestMode = availablePresentMode;
+            }
+        }
+
+        return bestMode;
+    }
+
+    /// @brief 设置交换范围，交换范围是交换链中图像的分辨率
+    /// @param capabilities
+    /// @return
+    VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) const noexcept
+    {
+        // 如果是最大值则表示允许我们自己选择对于窗口最合适的交换范围
+        if (std::numeric_limits<uint32_t>::max() != capabilities.currentExtent.width)
+        {
+            return capabilities.currentExtent;
+        }
+        else
+        {
+            VkExtent2D actualExtent = { WIDTH, HEIGHT };
+            actualExtent.width      = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
+            actualExtent.height     = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
+
+            return actualExtent;
+        }
+    }
+
+    /// @brief 创建交换链
+    void CreateSwapChain()
+    {
+        SwapChainSupportDetails swapChainSupport = QuerySwapChainSupport(m_physicalDevice);
+        VkSurfaceFormatKHR surfaceFormat         = ChooseSwapSurfaceFormat(swapChainSupport.foramts);
+        VkPresentModeKHR presentMode             = ChooseSwapPresentMode(swapChainSupport.presentModes);
+        VkExtent2D extent                        = ChooseSwapExtent(swapChainSupport.capabilities);
+
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+        {
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo = {};
+        createInfo.sType                    = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface                  = m_surface;
+        createInfo.minImageCount            = imageCount;
+        createInfo.imageFormat              = surfaceFormat.format;
+        createInfo.imageColorSpace          = surfaceFormat.colorSpace;
+        createInfo.imageExtent              = extent;
+        createInfo.imageArrayLayers         = 1;                     // 图像包含的层次，通常为1
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // 指定在图像上进行怎样的操作，比如显示、后处理等
+
+        auto indices = FindQueueFamilies(m_physicalDevice);
+        uint32_t queueFamilyIndices[]
+            = { static_cast<uint32_t>(indices.graphicsFamily.value()), static_cast<uint32_t>(indices.presentFamily.value()) };
+
+        // 在多个队列族使用交换链图像的方式
+        if (indices.graphicsFamily != indices.presentFamily)
+        {
+            // 图形队列和呈现队列不是同一个队列
+            // VK_SHARING_MODE_CONCURRENT 表示图像可以在多个队列族间使用，不需要显式地改变图像所有权
+            createInfo.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices   = queueFamilyIndices;
+        }
+        else
+        {
+            // VK_SHARING_MODE_EXCLUSIVE 表示一张图像同一时间只能被一个队列族所拥有，这种模式性能最佳
+            createInfo.imageSharingMode      = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0;
+            createInfo.pQueueFamilyIndices   = nullptr;
+        }
+
+        // 指定一个固定的变换操作（需要交换链具有supportedTransforms特性），此处不进行任何变换
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+        // 指定 alpha 通道是否被用来和窗口系统中的其他窗口进行混合操作
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        // 设置呈现模式
+        createInfo.presentMode = presentMode;
+        // 不关心被窗口系统中的其他窗口遮挡的像素的颜色， Vulkan 会进行优化，但是回读窗口的像素值可能会出现问题
+        createInfo.clipped = VK_TRUE;
+        // 交换链重建
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (VK_SUCCESS != vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapChain))
+        {
+            throw std::runtime_error("failed to create swap chain");
+        }
+
+        // 获取交换链图像的句柄
+        vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, nullptr);
+        m_swapChainImages.resize(imageCount);
+        vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, m_swapChainImages.data());
+
+        m_swapChainImageFormat = surfaceFormat.format;
+        m_swapChainExtent      = extent;
     }
 
 private:
@@ -466,6 +691,10 @@ private:
     VkQueue m_graphicsQueue { nullptr }; // 图形队列
     VkSurfaceKHR m_surface { nullptr };
     VkQueue m_presentQueue { nullptr };  // 呈现队列
+    VkSwapchainKHR m_swapChain { nullptr };
+    std::vector<VkImage> m_swapChainImages;
+    VkFormat m_swapChainImageFormat {};
+    VkExtent2D m_swapChainExtent {};
 };
 
 int main()
