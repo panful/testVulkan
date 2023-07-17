@@ -18,6 +18,7 @@
 
 #include <iostream>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -34,10 +35,11 @@ const bool g_enableValidationLayers = true;
 struct QueueFamilyIndices
 {
     std::optional<uint32_t> graphicsFamily {};
+    std::optional<uint32_t> presentFamily {};
 
     constexpr bool IsComplete() const noexcept
     {
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -72,6 +74,7 @@ private:
     {
         CreateInstance();
         SetupDebugCallback();
+        CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
     }
@@ -93,6 +96,9 @@ private:
 
         // 清理逻辑设备
         vkDestroyDevice(m_device, nullptr);
+
+        // 清理表面对象，必须在 Vulkan 实例清理之前
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 
         // 程序结束前清理 Vulkan 实例
         vkDestroyInstance(m_instance, nullptr);
@@ -160,6 +166,12 @@ private:
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
         std::vector<VkLayerProperties> availableLayers(layerCount);
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+        std::cout << "-------------------------------------------\n"
+                  << "All available layers:\n";
+        for (const auto& layer : availableLayers)
+        {
+            std::cout << layer.layerName << '\n';
+        }
 
         // 检查需要开启的校验层是否可以在所有可用的校验层列表中找到
         for (const char* layerName : g_validationLayers)
@@ -295,16 +307,31 @@ private:
     {
         QueueFamilyIndices indices;
 
-        uint32_t queueFamilyCount { 0 };
+        // 获取物理设备支持的队列族列表
+        uint32_t queueFamilyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
-        for (size_t i = 0; i < queueFamilies.size(); ++i)
+        for (uint32_t i = 0; i < queueFamilies.size(); ++i)
         {
-            if (queueFamilies.at(i).queueCount > 0 && queueFamilies.at(i).queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            // 图形队列族
+            if (queueFamilies.at(i).queueFlags & VK_QUEUE_GRAPHICS_BIT)
             {
-                indices.graphicsFamily = static_cast<uint32_t>(i);
+                indices.graphicsFamily = i;
+            }
+
+            // 呈现队列族
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &presentSupport);
+
+            if (presentSupport)
+            {
+                indices.presentFamily = i;
+            }
+
+            if (indices.IsComplete())
+            {
                 break;
             }
         }
@@ -317,23 +344,30 @@ private:
     {
         auto indices = FindQueueFamilies(m_physicalDevice);
 
+        std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        std::set<uint32_t> uniqueQueueFamilies { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
         // 控制指令缓存执行顺序的优先级，即使只有一个队列也要显示指定优先级
         float queuePriority { 1.f };
-
-        VkDeviceQueueCreateInfo queueCreateInfo = {};
-        queueCreateInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex        = indices.graphicsFamily.value();
-        queueCreateInfo.queueCount              = 1;
-        queueCreateInfo.pQueuePriorities        = &queuePriority;
+        for (auto queueFamily : uniqueQueueFamilies)
+        {
+            VkDeviceQueueCreateInfo queueCreateInfo {};
+            queueCreateInfo.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamily;
+            queueCreateInfo.queueCount       = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
 
         // 指定应用程序使用的设备特性（例如几何着色器）
         VkPhysicalDeviceFeatures deviceFeatures = {};
 
-        VkDeviceCreateInfo createInfo   = {};
-        createInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pQueueCreateInfos    = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
-        createInfo.pEnabledFeatures     = &deviceFeatures;
+        VkDeviceCreateInfo createInfo    = {};
+        createInfo.sType                 = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.queueCreateInfoCount  = static_cast<uint32_t>(queueCreateInfos.size());
+        createInfo.pQueueCreateInfos     = queueCreateInfos.data();
+        createInfo.pEnabledFeatures      = &deviceFeatures;
+        createInfo.enabledExtensionCount = 0;
 
         // 根据需要对设备和 Vulkan 实例使用相同的校验层
         if (g_enableValidationLayers)
@@ -358,6 +392,17 @@ private:
         // 3.队列索引，因为只创建了一个队列，所以此处使用索引0
         // 4.用来存储返回的队列句柄的内存地址
         vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 0, &m_graphicsQueue);
+        vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
+    }
+
+    /// @brief 创建表面，需要在程序退出前清理
+    /// @details 不同平台创建表面的方式不一样，这里使用 GLFW 统一创建
+    void CreateSurface()
+    {
+        if (VK_SUCCESS != glfwCreateWindowSurface(m_instance, m_window, nullptr, &m_surface))
+        {
+            throw std::runtime_error("failed to create window surface");
+        }
     }
 
 private:
@@ -370,8 +415,8 @@ private:
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
         VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
-        std::cerr << "===========================================\n"
-                  << "ERROR::validation layer: " << pCallbackData->pMessage << '\n';
+        std::clog << "===========================================\n"
+                  << "Debug::validation layer: " << pCallbackData->pMessage << '\n';
 
         return VK_FALSE;
     }
@@ -418,7 +463,9 @@ private:
     VkDebugUtilsMessengerEXT m_debugMessenger { nullptr };
     VkPhysicalDevice m_physicalDevice { nullptr };
     VkDevice m_device { nullptr };
-    VkQueue m_graphicsQueue { nullptr };
+    VkQueue m_graphicsQueue { nullptr }; // 图形队列
+    VkSurfaceKHR m_surface { nullptr };
+    VkQueue m_presentQueue { nullptr };  // 呈现队列
 };
 
 int main()
