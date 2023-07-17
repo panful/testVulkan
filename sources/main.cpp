@@ -20,6 +20,16 @@
 #include <stdexcept>
 #include <vector>
 
+// 需要开启的校验层的名称
+const std::vector<const char*> g_validationLayers = { "VK_LAYER_KHRONOS_validation" };
+
+// 是否启用校验层
+#ifdef NDEBUG
+const bool g_enableValidationLayers = false;
+#else
+const bool g_enableValidationLayers = true;
+#endif // NDEBUG
+
 class HelloTriangleApplication
 {
 public:
@@ -43,12 +53,14 @@ private:
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         // 禁止窗口大小的改变
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
         m_window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
     }
 
     void InitVulkan()
     {
         CreateInstance();
+        SetupDebugCallback();
     }
 
     void MainLoop() const noexcept
@@ -61,6 +73,11 @@ private:
 
     void Cleanup() noexcept
     {
+        if (g_enableValidationLayers)
+        {
+            DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
+        }
+
         // 程序结束前清理 Vulkan 实例
         vkDestroyInstance(m_instance, nullptr);
 
@@ -69,8 +86,14 @@ private:
     }
 
 private:
+    /// @brief 创建 Vulkan 实例
     void CreateInstance()
     {
+        if (g_enableValidationLayers && !CheckValidationLayerSupport())
+        {
+            throw std::runtime_error("validation layers requested, but not available");
+        }
+
         // 应用程序的信息，这些信息可能会作为驱动程序的优化依据，让驱动做一些特殊的优化
         VkApplicationInfo appInfo  = {};
         appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -81,40 +104,25 @@ private:
         appInfo.engineVersion      = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion         = VK_API_VERSION_1_0;
 
-        // Vulkan 是一个与平台无关的 API ，所以需要一个和窗口系统交互的扩展
-        // 使用 glfw 获取这个扩展
-        uint32_t glfwExtensionCount = 0;
-        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        std::cout << "-------------------------------------------\n"
-                  << "GLFW extensions:\n";
-        for (size_t i = 0; i < glfwExtensionCount; ++i)
-        {
-            std::cout << glfwExtensions[i] << '\n';
-        }
-
         // 指定驱动程序需要使用的全局扩展和校验层，全局是指对整个应用程序都有效，而不仅仅是某一个设备
         VkInstanceCreateInfo createInfo = {};
         createInfo.sType                = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo     = &appInfo;
 
         // 指定需要的全局扩展
-        createInfo.enabledExtensionCount   = glfwExtensionCount;
-        createInfo.ppEnabledExtensionNames = glfwExtensions;
+        auto requiredExtensions            = GetRequiredExtensions();
+        createInfo.enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size());
+        createInfo.ppEnabledExtensionNames = requiredExtensions.data();
 
         // 指定全局校验层
-        createInfo.enabledLayerCount = 0;
-
-        // 获取 Vulkan 支持的所有扩展
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-        std::cout << "-------------------------------------------\n"
-                  << "All supported extensions:\n";
-        for (const auto& e : extensions)
+        if (g_enableValidationLayers)
         {
-            std::cout << e.extensionName << '\n';
+            createInfo.enabledLayerCount   = static_cast<uint32_t>(g_validationLayers.size());
+            createInfo.ppEnabledLayerNames = g_validationLayers.data();
+        }
+        else
+        {
+            createInfo.enabledLayerCount = 0;
         }
 
         // 创建 Vulkan 实例，用来初始化 Vulkan 库
@@ -127,9 +135,159 @@ private:
         }
     }
 
+    /// @brief 检查需要开启的校验层是否被支持
+    /// @return
+    bool CheckValidationLayerSupport() const noexcept
+    {
+        // 获取所有可用的校验层列表
+        uint32_t layerCount = 0;
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+        std::vector<VkLayerProperties> availableLayers(layerCount);
+        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+        // 检查需要开启的校验层是否可以在所有可用的校验层列表中找到
+        for (const char* layerName : g_validationLayers)
+        {
+            bool layerFound { false };
+
+            for (const auto& layerProperties : availableLayers)
+            {
+                if (0 == std::strcmp(layerName, layerProperties.layerName))
+                {
+                    layerFound = true;
+                    break;
+                }
+            }
+
+            if (!layerFound)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// @brief 获取所有需要开启的扩展
+    /// @return
+    std::vector<const char*> GetRequiredExtensions()
+    {
+        // 获取 Vulkan 支持的所有扩展
+        uint32_t extensionCount = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+        std::cout << "-------------------------------------------\n"
+                  << "All supported extensions:\n";
+        for (const auto& e : extensions)
+        {
+            std::cout << e.extensionName << '\n';
+        }
+
+        // Vulkan 是一个与平台无关的 API ，所以需要一个和窗口系统交互的扩展
+        // 使用 glfw 获取这个扩展
+        uint32_t glfwExtensionCount = 0;
+        const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        std::cout << "-------------------------------------------\n"
+                  << "GLFW extensions:\n";
+        for (size_t i = 0; i < glfwExtensionCount; ++i)
+        {
+            std::cout << glfwExtensions[i] << '\n';
+        }
+
+        // 将需要开启的所有扩展添加到列表并返回
+        std::vector<const char*> requiredExtensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+        if (g_enableValidationLayers)
+        {
+            // 根据需要开启调试报告相关的扩展
+            requiredExtensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        }
+
+        return requiredExtensions;
+    }
+
+    /// @brief 设置回调函数来接受调试信息
+    void SetupDebugCallback()
+    {
+        if (!g_enableValidationLayers)
+        {
+            return;
+        }
+
+        VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
+        createInfo.sType                              = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+        // 设置回调函数处理的消息级别
+        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        // 设置回调函数处理的消息类型
+        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        // 设置回调函数
+        createInfo.pfnUserCallback = DebugCallback;
+        // 设置用户自定义数据，是可选的
+        createInfo.pUserData = nullptr;
+
+        if (VK_SUCCESS != CreateDebugUtilsMessengerEXT(m_instance, &createInfo, nullptr, &m_debugMessenger))
+        {
+            throw std::runtime_error("failed to set up debug callback");
+        }
+    }
+
+    /// @brief 接受调试信息的回调函数
+    /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
+    /// @param messageType 发生了与规范和性能无关的事件、出现了违反规范的错误、进行了可能影响 Vulkan 性能的行为
+    /// @param pCallbackData 包含了调试信息的字符串、存储有和消息相关的 Vulkan 对象句柄的数组、数组中的对象个数
+    /// @param pUserData 指向了设置回调函数时，传递的数据指针
+    /// @return 引发校验层处理的 Vulkan API 调用是否中断，通常只在测试校验层本身时会返回true，其余都应该返回 VK_FALSE
+    static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+    {
+        std::cerr << "===========================================\n"
+                  << "ERROR::validation layer: " << pCallbackData->pMessage << '\n';
+
+        return VK_FALSE;
+    }
+
+    /// @brief 代理函数，用来加载 Vulkan 扩展函数 vkCreateDebugUtilsMessengerEXT
+    /// @param instance
+    /// @param pCreateInfo
+    /// @param pAllocator
+    /// @param pCallback
+    /// @return
+    static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+        const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pCallback)
+    {
+        // vkCreateDebugUtilsMessengerEXT是一个扩展函数，不会被 Vulkan 库自动加载，所以需要手动加载
+        auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+
+        if (nullptr != func)
+        {
+            return func(instance, pCreateInfo, pAllocator, pCallback);
+        }
+        else
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+
+    /// @brief 代理函数，用来加载 Vulkan 扩展函数 vkDestroyDebugUtilsMessengerEXT
+    /// @param instance
+    /// @param callback
+    /// @param pAllocator
+    static void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT callback, const VkAllocationCallbacks* pAllocator)
+    {
+        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+
+        if (nullptr != func)
+        {
+            func(instance, callback, pAllocator);
+        }
+    }
+
 private:
     GLFWwindow* m_window { nullptr };
     VkInstance m_instance { nullptr };
+    VkDebugUtilsMessengerEXT m_debugMessenger { nullptr };
 };
 
 int main()
