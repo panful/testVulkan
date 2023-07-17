@@ -17,6 +17,7 @@
 #include <GLFW/glfw3.h>
 
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -29,6 +30,16 @@ const bool g_enableValidationLayers = false;
 #else
 const bool g_enableValidationLayers = true;
 #endif // NDEBUG
+
+struct QueueFamilyIndices
+{
+    std::optional<uint32_t> graphicsFamily {};
+
+    constexpr bool IsComplete() const noexcept
+    {
+        return graphicsFamily.has_value();
+    }
+};
 
 class HelloTriangleApplication
 {
@@ -61,6 +72,7 @@ private:
     {
         CreateInstance();
         SetupDebugCallback();
+        PickPhysicalDevice();
     }
 
     void MainLoop() const noexcept
@@ -233,6 +245,70 @@ private:
         }
     }
 
+    /// @brief 选择一个满足需求的物理设备（显卡）
+    void PickPhysicalDevice()
+    {
+        // 获取支持 Vulkan 的显卡数量
+        uint32_t deviceCount { 0 };
+        vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
+
+        if (0 == deviceCount)
+        {
+            throw std::runtime_error("failed to find GPUs with Vulkan support");
+        }
+
+        std::vector<VkPhysicalDevice> devices(deviceCount);
+        vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
+
+        for (const auto& device : devices)
+        {
+            if (IsDeviceSuitable(device))
+            {
+                m_physicalDevice = device;
+                break;
+            }
+        }
+
+        if (nullptr == m_physicalDevice)
+        {
+            throw std::runtime_error("failed to find a suitable GPU");
+        }
+    }
+
+    /// @brief 检查显卡是否满足需求
+    /// @param device
+    /// @return
+    bool IsDeviceSuitable(const VkPhysicalDevice device) const noexcept
+    {
+        auto indices = FindQueueFamilies(device);
+        return indices.IsComplete();
+    }
+
+    /// @brief 查找满足需求的队列族
+    /// @param device
+    /// @return
+    QueueFamilyIndices FindQueueFamilies(const VkPhysicalDevice device) const noexcept
+    {
+        QueueFamilyIndices indices;
+
+        uint32_t queueFamilyCount { 0 };
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+        for (size_t i = 0; i < queueFamilies.size(); ++i)
+        {
+            if (queueFamilies.at(i).queueCount > 0 && queueFamilies.at(i).queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            {
+                indices.graphicsFamily = static_cast<uint32_t>(i);
+                break;
+            }
+        }
+
+        return indices;
+    }
+
+private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
     /// @param messageType 发生了与规范和性能无关的事件、出现了违反规范的错误、进行了可能影响 Vulkan 性能的行为
@@ -288,6 +364,7 @@ private:
     GLFWwindow* m_window { nullptr };
     VkInstance m_instance { nullptr };
     VkDebugUtilsMessengerEXT m_debugMessenger { nullptr };
+    VkPhysicalDevice m_physicalDevice { nullptr };
 };
 
 int main()
