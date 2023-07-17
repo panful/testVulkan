@@ -91,6 +91,7 @@ private:
         PickPhysicalDevice();
         CreateLogicalDevice();
         CreateSwapChain();
+        CreateImageViews();
     }
 
     void MainLoop() const noexcept
@@ -103,6 +104,11 @@ private:
 
     void Cleanup() noexcept
     {
+        for (auto imageView : m_swapChainImageViews)
+        {
+            vkDestroyImageView(m_device, imageView, nullptr);
+        }
+
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
         vkDestroyDevice(m_device, nullptr);
 
@@ -630,6 +636,36 @@ private:
         m_swapChainExtent      = extent;
     }
 
+    /// @brief 创建图像视图
+    /// @details 任何 VkImage 对象都需要通过 VkImageView 来绑定访问，包括处于交换链中的、处于渲染管线中的
+    void CreateImageViews()
+    {
+        m_swapChainImageViews.resize(m_swapChainImages.size());
+
+        for (size_t i = 0; i < m_swapChainImages.size(); ++i)
+        {
+            VkImageViewCreateInfo createInfo           = {};
+            createInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image                           = m_swapChainImages.at(i);
+            createInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;         // 1d 2d 3d cube纹理
+            createInfo.format                          = m_swapChainImageFormat;
+            createInfo.components.r                    = VK_COMPONENT_SWIZZLE_IDENTITY; // 图像颜色通过的映射
+            createInfo.components.g                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a                    = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT; // 指定图像的用途，图像的哪一部分可以被访问
+            createInfo.subresourceRange.baseMipLevel   = 0;
+            createInfo.subresourceRange.levelCount     = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount     = 1;
+
+            if (VK_SUCCESS != vkCreateImageView(m_device, &createInfo, nullptr, &m_swapChainImageViews.at(i)))
+            {
+                throw std::runtime_error("failed to create image views");
+            }
+        }
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -695,6 +731,7 @@ private:
     std::vector<VkImage> m_swapChainImages;
     VkFormat m_swapChainImageFormat {};
     VkExtent2D m_swapChainExtent {};
+    std::vector<VkImageView> m_swapChainImageViews;
 };
 
 int main()
