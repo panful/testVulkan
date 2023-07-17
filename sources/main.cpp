@@ -73,6 +73,7 @@ private:
         CreateInstance();
         SetupDebugCallback();
         PickPhysicalDevice();
+        CreateLogicalDevice();
     }
 
     void MainLoop() const noexcept
@@ -89,6 +90,9 @@ private:
         {
             DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
         }
+
+        // 清理逻辑设备
+        vkDestroyDevice(m_device, nullptr);
 
         // 程序结束前清理 Vulkan 实例
         vkDestroyInstance(m_instance, nullptr);
@@ -308,6 +312,54 @@ private:
         return indices;
     }
 
+    /// @brief 创建逻辑设备作为和物理设备交互的接口
+    void CreateLogicalDevice()
+    {
+        auto indices = FindQueueFamilies(m_physicalDevice);
+
+        // 控制指令缓存执行顺序的优先级，即使只有一个队列也要显示指定优先级
+        float queuePriority { 1.f };
+
+        VkDeviceQueueCreateInfo queueCreateInfo = {};
+        queueCreateInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex        = indices.graphicsFamily.value();
+        queueCreateInfo.queueCount              = 1;
+        queueCreateInfo.pQueuePriorities        = &queuePriority;
+
+        // 指定应用程序使用的设备特性（例如几何着色器）
+        VkPhysicalDeviceFeatures deviceFeatures = {};
+
+        VkDeviceCreateInfo createInfo   = {};
+        createInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pQueueCreateInfos    = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures     = &deviceFeatures;
+
+        // 根据需要对设备和 Vulkan 实例使用相同的校验层
+        if (g_enableValidationLayers)
+        {
+            createInfo.enabledLayerCount   = static_cast<uint32_t>(g_validationLayers.size());
+            createInfo.ppEnabledLayerNames = g_validationLayers.data();
+        }
+        else
+        {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        // 创建逻辑设备
+        if (VK_SUCCESS != vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device))
+        {
+            throw std::runtime_error("failed to create logical device");
+        }
+
+        // 获取指定队列族的队列句柄
+        // 1.逻辑设备对象
+        // 2.队列族索引
+        // 3.队列索引，因为只创建了一个队列，所以此处使用索引0
+        // 4.用来存储返回的队列句柄的内存地址
+        vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 0, &m_graphicsQueue);
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -365,6 +417,8 @@ private:
     VkInstance m_instance { nullptr };
     VkDebugUtilsMessengerEXT m_debugMessenger { nullptr };
     VkPhysicalDevice m_physicalDevice { nullptr };
+    VkDevice m_device { nullptr };
+    VkQueue m_graphicsQueue { nullptr };
 };
 
 int main()
