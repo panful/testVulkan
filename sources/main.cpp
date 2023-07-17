@@ -92,6 +92,7 @@ private:
         CreateLogicalDevice();
         CreateSwapChain();
         CreateImageViews();
+        CreateGraphicsPipeline();
     }
 
     void MainLoop() const noexcept
@@ -664,6 +665,12 @@ private:
                 throw std::runtime_error("failed to create image views");
             }
         }
+    }
+
+    /// @brief 创建图形管线
+    /// @details 在 Vulkan 中几乎不允许对图形管线进行动态设置，也就意味着每一种状态都需要提前创建一个图形管线
+    void CreateGraphicsPipeline() const noexcept
+    {
     }
 
 private:
