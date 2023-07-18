@@ -96,6 +96,8 @@ private:
         CreateRenderPass();
         CreateGraphicsPipeline();
         CreateFramebuffers();
+        CreateCommandPool();
+        CreateCommandBuffers();
     }
 
     void MainLoop() const noexcept
@@ -123,6 +125,7 @@ private:
         vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
         vkDestroyDevice(m_device, nullptr);
 
         if (g_enableValidationLayers)
@@ -886,6 +889,7 @@ private:
         }
     }
 
+    /// @brief 创建帧缓冲对象，附着需要绑定到帧缓冲对象上使用
     void CreateFramebuffers()
     {
         m_swapChainFramebuffers.resize(m_swapChainImageViews.size());
@@ -896,7 +900,7 @@ private:
             framebufferInfo.sType                   = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass              = m_renderPass;
             framebufferInfo.attachmentCount         = 1;
-            framebufferInfo.pAttachments            = &m_swapChainImageViews.at(i);
+            framebufferInfo.pAttachments            = &m_swapChainImageViews.at(i); // 附着
             framebufferInfo.width                   = m_swapChainExtent.width;
             framebufferInfo.height                  = m_swapChainExtent.height;
             framebufferInfo.layers                  = 1;
@@ -904,6 +908,93 @@ private:
             if (VK_SUCCESS != vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapChainFramebuffers.at(i)))
             {
                 throw std::runtime_error("failed to create framebuffer");
+            }
+        }
+    }
+
+    /// @brief 创建指令池，用于管理指令缓冲对象使用的内存，并负责指令缓冲对象的分配
+    void CreateCommandPool()
+    {
+        auto indices = FindQueueFamilies(m_physicalDevice);
+
+        VkCommandPoolCreateInfo poolInfo = {};
+        poolInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex        = indices.graphicsFamily.value();
+        poolInfo.flags                   = 0;
+
+        if (VK_SUCCESS != vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool))
+        {
+            throw std::runtime_error("failed to create command pool");
+        }
+    }
+
+    /// @brief 为交换链中的每一个图像创建指令缓冲对象，使用它记录绘制指令
+    void CreateCommandBuffers()
+    {
+        m_commandBuffers.resize(m_swapChainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType                       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool                 = m_commandPool;
+        allocInfo.level                       = VK_COMMAND_BUFFER_LEVEL_PRIMARY; // 指定是主要还是辅助指令缓冲对象
+        allocInfo.commandBufferCount          = static_cast<uint32_t>(m_commandBuffers.size());
+
+        if (VK_SUCCESS != vkAllocateCommandBuffers(m_device, &allocInfo, m_commandBuffers.data()))
+        {
+            throw std::runtime_error("failed to allocate command buffers");
+        }
+
+        // 记录指令到指令缓冲
+        for (size_t i = 0; i < m_commandBuffers.size(); ++i)
+        {
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT; // 指定怎样使用指令缓冲
+            beginInfo.pInheritanceInfo         = nullptr; // 只用于辅助指令缓冲，指定从调用它的主要指令缓冲继承的状态
+
+            if (VK_SUCCESS != vkBeginCommandBuffer(m_commandBuffers.at(i), &beginInfo))
+            {
+                throw std::runtime_error("failed to begin recording command buffer");
+            }
+
+            // 清除色，相当于背景色
+            VkClearValue clearColor = { .1f, .2f, .3f, 1.f };
+
+            VkRenderPassBeginInfo renderPassInfo = {};
+            renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass            = m_renderPass;                  // 指定使用的渲染流程对象
+            renderPassInfo.framebuffer           = m_swapChainFramebuffers.at(i); // 指定使用的帧缓冲对象
+            renderPassInfo.renderArea.offset     = { 0, 0 };                      // 指定用于渲染的区域
+            renderPassInfo.renderArea.extent     = m_swapChainExtent;
+            renderPassInfo.clearValueCount       = 1; // 指定使用 VK_ATTACHMENT_LOAD_OP_CLEAR 标记后使用的清除值
+            renderPassInfo.pClearValues          = &clearColor;
+
+            // 所有可以记录指令到指令缓冲的函数，函数名都带有一个 vkCmd 前缀
+
+            // 开始一个渲染流程
+            // 1.用于记录指令的指令缓冲对象
+            // 2.使用的渲染流程的信息
+            // 3.指定渲染流程如何提供绘制指令的标记
+            vkCmdBeginRenderPass(m_commandBuffers.at(i), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            // 绑定图形管线
+            // 2.指定管线对象是图形管线还是计算管线
+            vkCmdBindPipeline(m_commandBuffers.at(i), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+
+            // 提交绘制操作到指定缓冲
+            // 2.顶点个数
+            // 3.用于实例渲染，为1表示不进行实例渲染
+            // 4.用于定义着色器变量 gl_VertexIndex 的值
+            // 5.用于定义着色器变量 gl_InstanceIndex 的值
+            vkCmdDraw(m_commandBuffers.at(i), 3, 1, 0, 0);
+
+            // 结束渲染流程
+            vkCmdEndRenderPass(m_commandBuffers.at(i));
+
+            // 结束记录指令到指令缓冲
+            if (VK_SUCCESS != vkEndCommandBuffer(m_commandBuffers.at(i)))
+            {
+                throw std::runtime_error("failed to record command buffer");
             }
         }
     }
@@ -997,6 +1088,8 @@ private:
     VkPipelineLayout m_pipelineLayout { nullptr };
     VkPipeline m_graphicsPipeline { nullptr };
     std::vector<VkFramebuffer> m_swapChainFramebuffers {};
+    VkCommandPool m_commandPool { nullptr };
+    std::vector<VkCommandBuffer> m_commandBuffers {};
 };
 
 int main()
