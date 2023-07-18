@@ -113,6 +113,7 @@ private:
         }
 
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+        vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         vkDestroyDevice(m_device, nullptr);
@@ -793,6 +794,30 @@ private:
             throw std::runtime_error("failed to create pipeline layout");
         }
 
+        // 完整的图形管线包括：着色器阶段、固定功能状态、管线布局、渲染流程
+        VkGraphicsPipelineCreateInfo pipelineInfo = {};
+        pipelineInfo.sType                        = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount                   = 2;
+        pipelineInfo.pStages                      = shaderStages;
+        pipelineInfo.pVertexInputState            = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState          = &inputAssembly;
+        pipelineInfo.pViewportState               = &viewportState;
+        pipelineInfo.pRasterizationState          = &rasterizer;
+        pipelineInfo.pMultisampleState            = &multisampling;
+        pipelineInfo.pDepthStencilState           = nullptr;
+        pipelineInfo.pColorBlendState             = &colorBlending;
+        pipelineInfo.pDynamicState                = nullptr;
+        pipelineInfo.layout                       = m_pipelineLayout;
+        pipelineInfo.renderPass                   = m_renderPass;
+        pipelineInfo.subpass                      = 0;       // 子流程在子流程数组中的索引
+        pipelineInfo.basePipelineHandle           = nullptr; // 以一个创建好的图形管线为基础创建一个新的图形管线
+        pipelineInfo.basePipelineIndex            = -1; // 只有该结构体的成员 flags 被设置为 VK_PIPELINE_CREATE_DERIVATIVE_BIT 才有效
+
+        if (VK_SUCCESS != vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_graphicsPipeline))
+        {
+            throw std::runtime_error("failed to create graphics pipeline");
+        }
+
         vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
         vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
     }
@@ -941,6 +966,7 @@ private:
     std::vector<VkImageView> m_swapChainImageViews {};
     VkRenderPass m_renderPass { nullptr };
     VkPipelineLayout m_pipelineLayout { nullptr };
+    VkPipeline m_graphicsPipeline { nullptr };
 };
 
 int main()
