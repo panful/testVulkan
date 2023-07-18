@@ -95,6 +95,7 @@ private:
         CreateImageViews();
         CreateRenderPass();
         CreateGraphicsPipeline();
+        CreateFramebuffers();
     }
 
     void MainLoop() const noexcept
@@ -107,12 +108,18 @@ private:
 
     void Cleanup() noexcept
     {
+        for (auto framebuffer : m_swapChainFramebuffers)
+        {
+            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
+        }
+
         for (auto imageView : m_swapChainImageViews)
         {
             vkDestroyImageView(m_device, imageView, nullptr);
         }
 
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+
         vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
@@ -879,6 +886,28 @@ private:
         }
     }
 
+    void CreateFramebuffers()
+    {
+        m_swapChainFramebuffers.resize(m_swapChainImageViews.size());
+
+        for (size_t i = 0; i < m_swapChainImageViews.size(); ++i)
+        {
+            VkFramebufferCreateInfo framebufferInfo = {};
+            framebufferInfo.sType                   = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass              = m_renderPass;
+            framebufferInfo.attachmentCount         = 1;
+            framebufferInfo.pAttachments            = &m_swapChainImageViews.at(i);
+            framebufferInfo.width                   = m_swapChainExtent.width;
+            framebufferInfo.height                  = m_swapChainExtent.height;
+            framebufferInfo.layers                  = 1;
+
+            if (VK_SUCCESS != vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapChainFramebuffers.at(i)))
+            {
+                throw std::runtime_error("failed to create framebuffer");
+            }
+        }
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -967,6 +996,7 @@ private:
     VkRenderPass m_renderPass { nullptr };
     VkPipelineLayout m_pipelineLayout { nullptr };
     VkPipeline m_graphicsPipeline { nullptr };
+    std::vector<VkFramebuffer> m_swapChainFramebuffers {};
 };
 
 int main()
