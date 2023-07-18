@@ -16,6 +16,7 @@
 #define GLFW_INCLUDE_VULKAN // 定义这个宏之后 glfw3.h 文件就会包含 Vulkan 的头文件
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -23,6 +24,7 @@
 #include <stdexcept>
 #include <vector>
 
+// 窗口默认大小
 constexpr uint32_t WIDTH  = 800;
 constexpr uint32_t HEIGHT = 600;
 
@@ -41,6 +43,7 @@ const bool g_enableValidationLayers = false;
 const bool g_enableValidationLayers = true;
 #endif // NDEBUG
 
+/// @brief 支持图形和呈现的队列族
 struct QueueFamilyIndices
 {
     std::optional<uint32_t> graphicsFamily {};
@@ -81,10 +84,11 @@ private:
 
         // 禁止 glfw 创建 OpenGL 上下文
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        // 禁止窗口大小的改变
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         m_window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+
+        glfwSetWindowUserPointer(m_window, this);
+        glfwSetFramebufferSizeCallback(m_window, FramebufferResizeCallback);
     }
 
     void InitVulkan()
@@ -119,17 +123,7 @@ private:
 
     void Cleanup() noexcept
     {
-        for (auto framebuffer : m_swapChainFramebuffers)
-        {
-            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-        }
-
-        for (auto imageView : m_swapChainImageViews)
-        {
-            vkDestroyImageView(m_device, imageView, nullptr);
-        }
-
-        vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+        CleanupSwapChain();
 
         vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
@@ -191,10 +185,16 @@ private:
         {
             createInfo.enabledLayerCount   = static_cast<uint32_t>(g_validationLayers.size());
             createInfo.ppEnabledLayerNames = g_validationLayers.data();
+
+            VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {};
+            PopulateDebugMessengerCreateInfo(debugCreateInfo);
+
+            createInfo.pNext = &debugCreateInfo;
         }
         else
         {
             createInfo.enabledLayerCount = 0;
+            createInfo.pNext             = nullptr;
         }
 
         // 创建 Vulkan 实例，用来初始化 Vulkan 库
@@ -248,7 +248,7 @@ private:
 
     /// @brief 获取所有需要开启的扩展
     /// @return
-    std::vector<const char*> GetRequiredExtensions()
+    std::vector<const char*> GetRequiredExtensions() const noexcept
     {
         // 获取 Vulkan 支持的所有扩展
         uint32_t extensionCount = 0;
@@ -293,17 +293,7 @@ private:
         }
 
         VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
-        createInfo.sType                              = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        // 设置回调函数处理的消息级别
-        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        // 设置回调函数处理的消息类型
-        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        // 设置回调函数
-        createInfo.pfnUserCallback = DebugCallback;
-        // 设置用户自定义数据，是可选的
-        createInfo.pUserData = nullptr;
+        PopulateDebugMessengerCreateInfo(createInfo);
 
         if (VK_SUCCESS != CreateDebugUtilsMessengerEXT(m_instance, &createInfo, nullptr, &m_debugMessenger))
         {
@@ -312,6 +302,7 @@ private:
     }
 
     /// @brief 选择一个满足需求的物理设备（显卡）
+    /// @details 可以选择任意数量的显卡并同时使用它们
     void PickPhysicalDevice()
     {
         // 获取支持 Vulkan 的显卡数量
@@ -346,6 +337,14 @@ private:
     /// @return
     bool IsDeviceSuitable(const VkPhysicalDevice device) const noexcept
     {
+        // 获取基本的设置属性，name、type以及Vulkan版本等等
+        // VkPhysicalDeviceProperties deviceProperties;
+        // vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+        // 获取对纹理的压缩、64位浮点数和多视图渲染等可选功能的支持
+        // VkPhysicalDeviceFeatures deviceFeatures;
+        // vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
         auto indices             = FindQueueFamilies(device);
         auto extensionsSupported = CheckDeviceExtensionSupported(device);
 
@@ -360,6 +359,7 @@ private:
     }
 
     /// @brief 查找满足需求的队列族
+    /// @details 不同的队列族支持不同的类型的指令，例如计算、内存传输、绘图等指令
     /// @param device
     /// @return
     QueueFamilyIndices FindQueueFamilies(const VkPhysicalDevice device) const noexcept
@@ -406,10 +406,13 @@ private:
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
         std::set<uint32_t> uniqueQueueFamilies { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
-        // 控制指令缓存执行顺序的优先级，即使只有一个队列也要显示指定优先级
+        // 控制指令缓存执行顺序的优先级，即使只有一个队列也要显示指定优先级，范围：[0.0, 1.0]
         float queuePriority { 1.f };
         for (auto queueFamily : uniqueQueueFamilies)
         {
+            // 描述队列簇中预要申请使用的队列数量
+            // 当前可用的驱动程序所提供的队列簇只允许创建少量的队列，并且很多时候没有必要创建多个队列
+            // 因为可以在多个线程上创建所有命令缓冲区，然后在主线程一次性的以较低开销的调用提交队列
             VkDeviceQueueCreateInfo queueCreateInfo {};
             queueCreateInfo.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueCreateInfo.queueFamilyIndex = queueFamily;
@@ -446,7 +449,8 @@ private:
             throw std::runtime_error("failed to create logical device");
         }
 
-        // 获取指定队列族的队列句柄
+        // 获取指定队列族的队列句柄，设备队列在逻辑设备被销毁时隐式清理
+        // 此处的队列簇可能相同，也就是以相同的参数调用了两次这个函数
         // 1.逻辑设备对象
         // 2.队列族索引
         // 3.队列索引，因为只创建了一个队列，所以此处使用索引0
@@ -459,6 +463,9 @@ private:
     /// @details 不同平台创建表面的方式不一样，这里使用 GLFW 统一创建
     void CreateSurface()
     {
+        // Vulkan 不能直接与窗口系统进行交互（是一个与平台特性无关的API集合），surface是 Vulkan 与窗体系统的连接桥梁
+        // 需要在instance创建之后立即创建窗体surface，因为它会影响物理设备的选择
+        // 窗体surface本身对于 Vulkan 也是非强制的，不需要同 OpenGL 一样必须要创建窗体surface
         if (VK_SUCCESS != glfwCreateWindowSurface(m_instance, m_window, nullptr, &m_surface))
         {
             throw std::runtime_error("failed to create window surface");
@@ -496,7 +503,7 @@ private:
         // 查询基础表面特性
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_surface, &details.capabilities);
 
-        // 查询表面支持的格式
+        // 查询表面支持的格式，确保集合对于所有有效的格式可扩充
         uint32_t formatCount { 0 };
         vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
         if (0 != formatCount)
@@ -590,9 +597,14 @@ private:
         }
         else
         {
-            VkExtent2D actualExtent = { WIDTH, HEIGHT };
-            actualExtent.width      = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
-            actualExtent.height     = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
+            int width { 0 }, height { 0 };
+            glfwGetFramebufferSize(m_window, &width, &height);
+
+            // 使用GLFW窗口的大小来设置交换链中图像的分辨率
+            VkExtent2D actualExtent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
+
+            actualExtent.width  = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+            actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 
             return actualExtent;
         }
@@ -606,8 +618,9 @@ private:
         VkPresentModeKHR presentMode             = ChooseSwapPresentMode(swapChainSupport.presentModes);
         VkExtent2D extent                        = ChooseSwapExtent(swapChainSupport.capabilities);
 
+        // 交换链中的图像数量，可以理解为队列的长度，指定运行时图像的最小数量
+        // maxImageCount数值为0代表除了内存之外没有限制
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-
         if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
         {
             imageCount = swapChainSupport.capabilities.maxImageCount;
@@ -620,8 +633,8 @@ private:
         createInfo.imageFormat              = surfaceFormat.format;
         createInfo.imageColorSpace          = surfaceFormat.colorSpace;
         createInfo.imageExtent              = extent;
-        createInfo.imageArrayLayers         = 1;                     // 图像包含的层次，通常为1
-        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // 指定在图像上进行怎样的操作，比如显示、后处理等
+        createInfo.imageArrayLayers         = 1;                     // 图像包含的层次，通常为1，3d图像大于1
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // 指定在图像上进行怎样的操作，比如显示（颜色附件）、后处理等
 
         auto indices = FindQueueFamilies(m_physicalDevice);
         uint32_t queueFamilyIndices[]
@@ -650,9 +663,12 @@ private:
         createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         // 设置呈现模式
         createInfo.presentMode = presentMode;
-        // 不关心被窗口系统中的其他窗口遮挡的像素的颜色， Vulkan 会进行优化，但是回读窗口的像素值可能会出现问题
+        // 设置为true，不关心被遮蔽的像素数据，比如由于其他的窗体置于前方时或者渲染的部分内容存在于可视区域之外，
+        // 除非真的需要读取这些像素获数据进行处理（设置为true回读窗口像素可能会有问题），否则可以开启裁剪获得最佳性能。
         createInfo.clipped = VK_TRUE;
         // 交换链重建
+        // Vulkan运行时，交换链可能在某些条件下被替换，比如窗口调整大小或者交换链需要重新分配更大的图像队列。
+        // 在这种情况下，交换链实际上需要重新分配创建，并且必须在此字段中指定对旧的引用，用以回收资源
         createInfo.oldSwapchain = VK_NULL_HANDLE;
 
         if (VK_SUCCESS != vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapChain))
@@ -660,7 +676,8 @@ private:
             throw std::runtime_error("failed to create swap chain");
         }
 
-        // 获取交换链图像的句柄
+        // 获取交换链中图像，图像会在交换链销毁的同时自动清理
+        // 之前给VkSwapchainCreateInfoKHR 设置了期望的图像数量，但是实际运行允许创建更多的图像数量，因此需要重新获取数量
         vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, nullptr);
         m_swapChainImages.resize(imageCount);
         vkGetSwapchainImagesKHR(m_device, m_swapChain, &imageCount, m_swapChainImages.data());
@@ -833,7 +850,7 @@ private:
         pipelineInfo.pMultisampleState            = &multisampling;
         pipelineInfo.pDepthStencilState           = nullptr;
         pipelineInfo.pColorBlendState             = &colorBlending;
-        pipelineInfo.pDynamicState                = nullptr;
+        pipelineInfo.pDynamicState                = &dynamicState;
         pipelineInfo.layout                       = m_pipelineLayout;
         pipelineInfo.renderPass                   = m_renderPass;
         pipelineInfo.subpass                      = 0;       // 子流程在子流程数组中的索引
@@ -945,10 +962,14 @@ private:
     {
         auto indices = FindQueueFamilies(m_physicalDevice);
 
+        // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT 指定从Pool中分配的CommandBuffer将是短暂的，意味着它们将在相对较短的时间内被重置或释放
+        // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT 允许从Pool中分配的任何CommandBuffer被单独重置到inital状态
+        // 没有设置这个flag则不能使用 vkResetCommandBuffer
+        // VK_COMMAND_POOL_CREATE_PROTECTED_BIT 指定从Pool中分配的CommandBuffer是受保护的CommandBuffer
         VkCommandPoolCreateInfo poolInfo = {};
         poolInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex        = indices.graphicsFamily.value();
-        poolInfo.flags                   = 0;
 
         if (VK_SUCCESS != vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool))
         {
@@ -971,59 +992,75 @@ private:
         {
             throw std::runtime_error("failed to allocate command buffers");
         }
+    }
 
-        // 记录指令到指令缓冲
-        for (size_t i = 0; i < m_commandBuffers.size(); ++i)
+    /// @brief 记录指令到指令缓冲
+    void RecordCommandBuffer(const VkCommandBuffer commandBuffer, const VkFramebuffer framebuffer) const
+    {
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT; // 指定怎样使用指令缓冲
+        beginInfo.pInheritanceInfo         = nullptr; // 只用于辅助指令缓冲，指定从调用它的主要指令缓冲继承的状态
+
+        if (VK_SUCCESS != vkBeginCommandBuffer(commandBuffer, &beginInfo))
         {
-            VkCommandBufferBeginInfo beginInfo = {};
-            beginInfo.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT; // 指定怎样使用指令缓冲
-            beginInfo.pInheritanceInfo         = nullptr; // 只用于辅助指令缓冲，指定从调用它的主要指令缓冲继承的状态
+            throw std::runtime_error("failed to begin recording command buffer");
+        }
 
-            if (VK_SUCCESS != vkBeginCommandBuffer(m_commandBuffers.at(i), &beginInfo))
-            {
-                throw std::runtime_error("failed to begin recording command buffer");
-            }
+        // 清除色，相当于背景色
+        VkClearValue clearColor = { { { .1f, .2f, .3f, 1.f } } };
 
-            // 清除色，相当于背景色
-            VkClearValue clearColor = { .1f, .2f, .3f, 1.f };
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass            = m_renderPass; // 指定使用的渲染流程对象
+        renderPassInfo.framebuffer           = framebuffer;  // 指定使用的帧缓冲对象
+        renderPassInfo.renderArea.offset     = { 0, 0 };     // 指定用于渲染的区域
+        renderPassInfo.renderArea.extent     = m_swapChainExtent;
+        renderPassInfo.clearValueCount       = 1;            // 指定使用 VK_ATTACHMENT_LOAD_OP_CLEAR 标记后使用的清除值
+        renderPassInfo.pClearValues          = &clearColor;
 
-            VkRenderPassBeginInfo renderPassInfo = {};
-            renderPassInfo.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            renderPassInfo.renderPass            = m_renderPass;                  // 指定使用的渲染流程对象
-            renderPassInfo.framebuffer           = m_swapChainFramebuffers.at(i); // 指定使用的帧缓冲对象
-            renderPassInfo.renderArea.offset     = { 0, 0 };                      // 指定用于渲染的区域
-            renderPassInfo.renderArea.extent     = m_swapChainExtent;
-            renderPassInfo.clearValueCount       = 1; // 指定使用 VK_ATTACHMENT_LOAD_OP_CLEAR 标记后使用的清除值
-            renderPassInfo.pClearValues          = &clearColor;
+        // 所有可以记录指令到指令缓冲的函数，函数名都带有一个 vkCmd 前缀
 
-            // 所有可以记录指令到指令缓冲的函数，函数名都带有一个 vkCmd 前缀
+        // 开始一个渲染流程
+        // 1.用于记录指令的指令缓冲对象
+        // 2.使用的渲染流程的信息
+        // 3.指定渲染流程如何提供绘制指令的标记
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            // 开始一个渲染流程
-            // 1.用于记录指令的指令缓冲对象
-            // 2.使用的渲染流程的信息
-            // 3.指定渲染流程如何提供绘制指令的标记
-            vkCmdBeginRenderPass(m_commandBuffers.at(i), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        // 绑定图形管线
+        // 2.指定管线对象是图形管线还是计算管线
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
 
-            // 绑定图形管线
-            // 2.指定管线对象是图形管线还是计算管线
-            vkCmdBindPipeline(m_commandBuffers.at(i), VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+        VkViewport viewport = {};
+        viewport.x          = 0.f;
+        viewport.y          = 0.f;
+        viewport.width      = static_cast<float>(m_swapChainExtent.width);
+        viewport.height     = static_cast<float>(m_swapChainExtent.height);
+        viewport.minDepth   = 0.f;
+        viewport.maxDepth   = 1.f;
 
-            // 提交绘制操作到指定缓冲
-            // 2.顶点个数
-            // 3.用于实例渲染，为1表示不进行实例渲染
-            // 4.用于定义着色器变量 gl_VertexIndex 的值
-            // 5.用于定义着色器变量 gl_InstanceIndex 的值
-            vkCmdDraw(m_commandBuffers.at(i), 3, 1, 0, 0);
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
-            // 结束渲染流程
-            vkCmdEndRenderPass(m_commandBuffers.at(i));
+        VkRect2D scissor = {};
+        scissor.offset   = { 0, 0 };
+        scissor.extent   = m_swapChainExtent;
 
-            // 结束记录指令到指令缓冲
-            if (VK_SUCCESS != vkEndCommandBuffer(m_commandBuffers.at(i)))
-            {
-                throw std::runtime_error("failed to record command buffer");
-            }
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+        // 提交绘制操作到指定缓冲
+        // 2.顶点个数
+        // 3.用于实例渲染，为1表示不进行实例渲染
+        // 4.用于定义着色器变量 gl_VertexIndex 的值
+        // 5.用于定义着色器变量 gl_InstanceIndex 的值
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+        // 结束渲染流程
+        vkCmdEndRenderPass(commandBuffer);
+
+        // 结束记录指令到指令缓冲
+        if (VK_SUCCESS != vkEndCommandBuffer(commandBuffer))
+        {
+            throw std::runtime_error("failed to record command buffer");
         }
     }
 
@@ -1035,16 +1072,30 @@ private:
         // 使用栅栏可以进行CPU与GPU之间的同步，防止超过 MAX_FRAMES_IN_FLIGHT 帧的指令同时被提交执行
         vkWaitForFences(m_device, 1, &m_inFlightFences.at(m_currentFrame), VK_TRUE, std::numeric_limits<uint64_t>::max());
 
-        // 手动将栅栏重置为未发出信号的状态（必须手动设置）
-        vkResetFences(m_device, 1, &m_inFlightFences.at(m_currentFrame));
-
         // 从交换链获取一张图像
         uint32_t imageIndex { 0 };
         // 3.获取图像的超时时间，此处禁用图像获取超时
         // 4.通知的同步对象
         // 5.输出可用的交换链图像的索引
-        vkAcquireNextImageKHR(
+        VkResult result = vkAcquireNextImageKHR(
             m_device, m_swapChain, std::numeric_limits<uint64_t>::max(), m_imageAvailableSemaphores.at(m_currentFrame), VK_NULL_HANDLE, &imageIndex);
+
+        // VK_ERROR_OUT_OF_DATE_KHR 交换链不能继续使用，通常发生在窗口大小改变后
+        // VK_SUBOPTIMAL_KHR 交换链仍然可以使用，但表面属性已经不能准确匹配
+        if (VK_ERROR_OUT_OF_DATE_KHR == result)
+        {
+            RecreateSwapChain();
+            return;
+        }
+        else if (VK_SUCCESS != result && VK_SUBOPTIMAL_KHR != result)
+        {
+            throw std::runtime_error("failed to acquire swap chain image");
+        }
+
+        // 手动将栅栏重置为未发出信号的状态（必须手动设置）
+        vkResetFences(m_device, 1, &m_inFlightFences.at(m_currentFrame));
+        vkResetCommandBuffer(m_commandBuffers.at(imageIndex), 0);
+        RecordCommandBuffer(m_commandBuffers.at(imageIndex), m_swapChainFramebuffers.at(imageIndex));
 
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
@@ -1077,7 +1128,18 @@ private:
         presentInfo.pResults           = nullptr; // 可以通过该变量获取每个交换链的呈现操作是否成功的信息
 
         // 请求交换链进行图像呈现操作
-        vkQueuePresentKHR(m_presentQueue, &presentInfo);
+        result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+
+        if (VK_ERROR_OUT_OF_DATE_KHR == result || VK_SUBOPTIMAL_KHR == result || m_framebufferResized)
+        {
+            m_framebufferResized = false;
+            // 交换链不完全匹配时也重建交换链
+            RecreateSwapChain();
+        }
+        else if (VK_SUCCESS != result)
+        {
+            throw std::runtime_error("failed to presend swap chain image");
+        }
 
         // 更新当前帧索引
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -1108,6 +1170,62 @@ private:
         }
     }
 
+    /// @brief 重建交换链
+    void RecreateSwapChain()
+    {
+        int width { 0 }, height { 0 };
+        glfwGetFramebufferSize(m_window, &width, &height);
+        while (0 == width || 0 == height)
+        {
+            glfwGetFramebufferSize(m_window, &width, &height);
+            glfwWaitEvents();
+        }
+
+        // 等待设备处于空闲状态，避免在对象的使用过程中将其清除重建
+        vkDeviceWaitIdle(m_device);
+
+        // 在重建前清理之前使用的对象
+        CleanupSwapChain();
+
+        // 可以通过动态状态来设置视口和裁剪矩形来避免重建管线
+        CreateSwapChain();
+        CreateImageViews();
+        CreateFramebuffers();
+    }
+
+    /// @brief 清除交换链相关对象
+    void CleanupSwapChain() noexcept
+    {
+        for (auto framebuffer : m_swapChainFramebuffers)
+        {
+            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
+        }
+
+        for (auto imageView : m_swapChainImageViews)
+        {
+            vkDestroyImageView(m_device, imageView, nullptr);
+        }
+
+        vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+    }
+
+    /// @brief 设置调试扩展信息
+    /// @param createInfo
+    void PopulateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) const noexcept
+    {
+        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+        // 设置回调函数处理的消息级别
+        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        // 设置回调函数处理的消息类型
+        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        // 设置回调函数
+        createInfo.pfnUserCallback = DebugCallback;
+        // 设置用户自定义数据，是可选的
+        createInfo.pUserData = nullptr;
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -1116,7 +1234,7 @@ private:
     /// @param pUserData 指向了设置回调函数时，传递的数据指针
     /// @return 引发校验层处理的 Vulkan API 调用是否中断，通常只在测试校验层本身时会返回true，其余都应该返回 VK_FALSE
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-        VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
+        VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) noexcept
     {
         std::clog << "===========================================\n"
                   << "Debug::validation layer: " << pCallbackData->pMessage << '\n';
@@ -1131,7 +1249,7 @@ private:
     /// @param pCallback
     /// @return
     static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-        const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pCallback)
+        const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pCallback) noexcept
     {
         // vkCreateDebugUtilsMessengerEXT是一个扩展函数，不会被 Vulkan 库自动加载，所以需要手动加载
         auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
@@ -1150,7 +1268,8 @@ private:
     /// @param instance
     /// @param callback
     /// @param pAllocator
-    static void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT callback, const VkAllocationCallbacks* pAllocator)
+    static void DestroyDebugUtilsMessengerEXT(
+        VkInstance instance, VkDebugUtilsMessengerEXT callback, const VkAllocationCallbacks* pAllocator) noexcept
     {
         auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
 
@@ -1179,6 +1298,12 @@ private:
         return buffer;
     }
 
+    static void FramebufferResizeCallback(GLFWwindow* window, int widht, int height) noexcept
+    {
+        auto app                  = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+        app->m_framebufferResized = true;
+    }
+
 private:
     GLFWwindow* m_window { nullptr };
     VkInstance m_instance { nullptr };
@@ -1203,6 +1328,7 @@ private:
     std::vector<VkSemaphore> m_renderFinishedSemaphores {};
     std::vector<VkFence> m_inFlightFences {};
     size_t m_currentFrame { 0 };
+    bool m_framebufferResized { false };
 };
 
 int main()
