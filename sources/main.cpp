@@ -26,6 +26,9 @@
 constexpr uint32_t WIDTH  = 800;
 constexpr uint32_t HEIGHT = 600;
 
+// 同时并行处理的帧数
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
 // 需要开启的校验层的名称
 const std::vector<const char*> g_validationLayers = { "VK_LAYER_KHRONOS_validation" };
 // 交换链扩展
@@ -98,14 +101,20 @@ private:
         CreateFramebuffers();
         CreateCommandPool();
         CreateCommandBuffers();
+        CreateSyncObjects();
     }
 
-    void MainLoop() const noexcept
+    void MainLoop()
     {
         while (!glfwWindowShouldClose(m_window))
         {
             glfwPollEvents();
+            DrawFrame();
         }
+
+        // 等待逻辑设备的操作结束执行
+        // DrawFrame 函数中的操作是异步执行的，关闭窗口跳出while循环时，绘制操作和呈现操作可能仍在执行，不能进行清除操作
+        vkDeviceWaitIdle(m_device);
     }
 
     void Cleanup() noexcept
@@ -125,6 +134,14 @@ private:
         vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            vkDestroySemaphore(m_device, m_imageAvailableSemaphores.at(i), nullptr);
+            vkDestroySemaphore(m_device, m_renderFinishedSemaphores.at(i), nullptr);
+            vkDestroyFence(m_device, m_inFlightFences.at(i), nullptr);
+        }
+
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
         vkDestroyDevice(m_device, nullptr);
 
@@ -876,12 +893,23 @@ private:
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments    = &colorAttachmentRef;             // 指定颜色附着
 
+        // 渲染流程使用的依赖信息
+        VkSubpassDependency dependency = {};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL; // 渲染流程开始前的子流程，为了避免出现循环依赖，dst的值必须大于src的值
+        dependency.dstSubpass    = 0;                // 渲染流程结束后的子流程
+        dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; // 指定需要等待的管线阶段
+        dependency.srcAccessMask = 0;                                             // 指定子流程将进行的操作类型
+        dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
         VkRenderPassCreateInfo renderPassInfo = {};
         renderPassInfo.sType                  = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         renderPassInfo.attachmentCount        = 1;
         renderPassInfo.pAttachments           = &colorAttachment;
         renderPassInfo.subpassCount           = 1;
         renderPassInfo.pSubpasses             = &subpass;
+        renderPassInfo.dependencyCount        = 1;
+        renderPassInfo.pDependencies          = &dependency;
 
         if (VK_SUCCESS != vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass))
         {
@@ -999,6 +1027,87 @@ private:
         }
     }
 
+    /// @brief 绘制每一帧
+    /// @details 流程：从交换链获取一张图像、对帧缓冲附着执行指令缓冲中的渲染指令、返回渲染后的图像到交换链进行呈现操作
+    void DrawFrame()
+    {
+        // 等待一组栅栏中的一个或全部栅栏发出信号，即上一次提交的指令结束执行
+        // 使用栅栏可以进行CPU与GPU之间的同步，防止超过 MAX_FRAMES_IN_FLIGHT 帧的指令同时被提交执行
+        vkWaitForFences(m_device, 1, &m_inFlightFences.at(m_currentFrame), VK_TRUE, std::numeric_limits<uint64_t>::max());
+
+        // 手动将栅栏重置为未发出信号的状态（必须手动设置）
+        vkResetFences(m_device, 1, &m_inFlightFences.at(m_currentFrame));
+
+        // 从交换链获取一张图像
+        uint32_t imageIndex { 0 };
+        // 3.获取图像的超时时间，此处禁用图像获取超时
+        // 4.通知的同步对象
+        // 5.输出可用的交换链图像的索引
+        vkAcquireNextImageKHR(
+            m_device, m_swapChain, std::numeric_limits<uint64_t>::max(), m_imageAvailableSemaphores.at(m_currentFrame), VK_NULL_HANDLE, &imageIndex);
+
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+        VkSubmitInfo submitInfo         = {};
+        submitInfo.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.waitSemaphoreCount   = 1;
+        submitInfo.pWaitSemaphores      = &m_imageAvailableSemaphores.at(m_currentFrame); // 指定队列开始执行前需要等待的信号量
+        submitInfo.pWaitDstStageMask    = waitStages;                                     // 指定需要等待的管线阶段
+        submitInfo.commandBufferCount   = 1;
+        submitInfo.pCommandBuffers      = &m_commandBuffers[imageIndex];                  // 指定实际被提交执行的指令缓冲对象
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores.at(m_currentFrame); // 指定在指令缓冲执行结束后发出信号的信号量对象
+
+        // 提交指令缓冲给图形指令队列
+        // 如果不等待上一次提交的指令结束执行，可能会导致内存泄漏
+        // 1.vkQueueWaitIdle 可以等待上一次的指令结束执行，2.也可以同时渲染多帧解决该问题（使用栅栏）
+        // vkQueueSubmit 的最后一个参数用来指定在指令缓冲执行结束后需要发起信号的栅栏对象
+        if (VK_SUCCESS != vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences.at(m_currentFrame)))
+        {
+            throw std::runtime_error("failed to submit draw command buffer");
+        }
+
+        VkPresentInfoKHR presentInfo   = {};
+        presentInfo.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores    = &m_renderFinishedSemaphores.at(m_currentFrame); // 指定开始呈现操作需要等待的信号量
+        presentInfo.swapchainCount     = 1;
+        presentInfo.pSwapchains        = &m_swapChain;                                   // 指定用于呈现图像的交换链
+        presentInfo.pImageIndices      = &imageIndex;                                    // 指定需要呈现的图像在交换链中的索引
+        presentInfo.pResults           = nullptr; // 可以通过该变量获取每个交换链的呈现操作是否成功的信息
+
+        // 请求交换链进行图像呈现操作
+        vkQueuePresentKHR(m_presentQueue, &presentInfo);
+
+        // 更新当前帧索引
+        m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+
+    /// @brief 创建同步对象，用于发出图像已经被获取可以开始渲染和渲染已经结束可以开始呈现的信号
+    void CreateSyncObjects()
+    {
+        m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
+        VkSemaphoreCreateInfo semaphoreInfo = {};
+        semaphoreInfo.sType                 = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fenceInfo = {};
+        fenceInfo.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags             = VK_FENCE_CREATE_SIGNALED_BIT; // 初始状态设置为已发出信号，避免 vkWaitForFences 一直等待
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            if (VK_SUCCESS != vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores.at(i))
+                || VK_SUCCESS != vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores.at(i))
+                || vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences.at(i)))
+            {
+                throw std::runtime_error("failed to create synchronization objects for a frame");
+            }
+        }
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -1090,6 +1199,10 @@ private:
     std::vector<VkFramebuffer> m_swapChainFramebuffers {};
     VkCommandPool m_commandPool { nullptr };
     std::vector<VkCommandBuffer> m_commandBuffers {};
+    std::vector<VkSemaphore> m_imageAvailableSemaphores {};
+    std::vector<VkSemaphore> m_renderFinishedSemaphores {};
+    std::vector<VkFence> m_inFlightFences {};
+    size_t m_currentFrame { 0 };
 };
 
 int main()
