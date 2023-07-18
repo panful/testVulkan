@@ -93,6 +93,7 @@ private:
         CreateLogicalDevice();
         CreateSwapChain();
         CreateImageViews();
+        CreateRenderPass();
         CreateGraphicsPipeline();
     }
 
@@ -113,6 +114,7 @@ private:
 
         vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
         vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         vkDestroyDevice(m_device, nullptr);
 
         if (g_enableValidationLayers)
@@ -814,6 +816,44 @@ private:
         return shaderModule;
     }
 
+    /// @brief 创建渲染流程对象，用于渲染的帧缓冲附着，指定颜色和深度缓冲以及采样数
+    void CreateRenderPass()
+    {
+        // 附着描述
+        VkAttachmentDescription colorAttachment = {};
+        colorAttachment.format                  = m_swapChainImageFormat;       // 颜色缓冲附着的格式
+        colorAttachment.samples                 = VK_SAMPLE_COUNT_1_BIT;        // 采样数
+        colorAttachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR;  // 渲染之前对附着中的数据（颜色和深度）进行操作
+        colorAttachment.storeOp                 = VK_ATTACHMENT_STORE_OP_STORE; // 渲染之后对附着中的数据（颜色和深度）进行操作
+        colorAttachment.stencilLoadOp           = VK_ATTACHMENT_LOAD_OP_DONT_CARE;  // 渲染之前对模板缓冲的操作
+        colorAttachment.stencilStoreOp          = VK_ATTACHMENT_STORE_OP_DONT_CARE; // 渲染之后对模板缓冲的操作
+        colorAttachment.initialLayout           = VK_IMAGE_LAYOUT_UNDEFINED;        // 渲染流程开始前的图像布局方式
+        colorAttachment.finalLayout             = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;  // 渲染流程结束后的图像布局方式
+
+        // 子流程引用的附着
+        VkAttachmentReference colorAttachmentRef = {};
+        colorAttachmentRef.attachment            = 0; // 索引，对应于片段着色器中的 layout(location = 0) out
+        colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        // 子流程
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS; // 图形渲染子流程
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments    = &colorAttachmentRef;             // 指定颜色附着
+
+        VkRenderPassCreateInfo renderPassInfo = {};
+        renderPassInfo.sType                  = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount        = 1;
+        renderPassInfo.pAttachments           = &colorAttachment;
+        renderPassInfo.subpassCount           = 1;
+        renderPassInfo.pSubpasses             = &subpass;
+
+        if (VK_SUCCESS != vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass))
+        {
+            throw std::runtime_error("failed to create render pass");
+        }
+    }
+
 private:
     /// @brief 接受调试信息的回调函数
     /// @param messageSeverity 消息的级别：诊断、资源创建、警告、不合法或可能造成崩溃的操作
@@ -895,10 +935,11 @@ private:
     VkSurfaceKHR m_surface { nullptr };
     VkQueue m_presentQueue { nullptr };  // 呈现队列
     VkSwapchainKHR m_swapChain { nullptr };
-    std::vector<VkImage> m_swapChainImages;
+    std::vector<VkImage> m_swapChainImages {};
     VkFormat m_swapChainImageFormat {};
     VkExtent2D m_swapChainExtent {};
-    std::vector<VkImageView> m_swapChainImageViews;
+    std::vector<VkImageView> m_swapChainImageViews {};
+    VkRenderPass m_renderPass { nullptr };
     VkPipelineLayout m_pipelineLayout { nullptr };
 };
 
