@@ -1,29 +1,36 @@
 {
     "scenes" : [
       {
+        "name": "test_scene_0",
         "nodes" : [ 0, 1 ]
       },
       {
+        "name": "test_scene_1",
         "nodes" : [ 3, 4 ]
       }
     ],
     "nodes" : [
       {
+        "name": "test_node_0",
         "rotation" : [ 0.0, 0.0, 0.0, 1.0 ],
         "mesh" : 0
       },
       {
+        "name": "test_node_1",
         "children": [2]
       },
       {
+        "name": "test_node_2",
         "translation" : [ 0.5, 0.5, 3.0 ],
         "camera" : 0
       },
       {
+        "name": "test_node_3",
         "translation" : [ 0.5, 0.5, 3.0 ],
         "camera" : 1
       },
       {
+        "name": "test_node_4",
         "translation" : [ 0.0, 1.5, 0.0 ],
         "mesh" : 0
       }
@@ -31,6 +38,7 @@
   
     "cameras" : [
       {
+        "name": "camera_0_perspective",
         "type": "perspective",
         "perspective": {
           "aspectRatio": 1.0,
@@ -40,6 +48,7 @@
         }
       },
       {
+        "name": "camera_1_orthographic",
         "type": "orthographic",
         "orthographic": {
           "xmag": 1.0,
@@ -52,7 +61,7 @@
   
     "meshes" : [
       {
-        "name": "test_gltf",
+        "name": "test_mesh_0",
         "primitives" : [ {
           "attributes" : {
             "POSITION" : 1
