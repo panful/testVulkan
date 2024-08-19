@@ -1,118 +1,153 @@
 {
-    "scenes" : [
-      {
-        "name": "test_scene_0",
-        "nodes" : [ 0, 1 ]
-      },
-      {
-        "name": "test_scene_1",
-        "nodes" : [ 3, 4 ]
-      }
-    ],
-    "nodes" : [
-      {
-        "name": "test_node_0",
-        "rotation" : [ 0.0, 0.0, 0.0, 1.0 ],
-        "mesh" : 0
-      },
-      {
-        "name": "test_node_1",
-        "children": [2]
-      },
-      {
-        "name": "test_node_2",
-        "translation" : [ 0.5, 0.5, 3.0 ],
-        "camera" : 0
-      },
-      {
-        "name": "test_node_3",
-        "translation" : [ 0.5, 0.5, 3.0 ],
-        "camera" : 1
-      },
-      {
-        "name": "test_node_4",
-        "translation" : [ 0.0, 1.5, 0.0 ],
-        "mesh" : 0
-      }
-    ],
-  
-    "cameras" : [
-      {
-        "name": "camera_0_perspective",
-        "type": "perspective",
-        "perspective": {
-          "aspectRatio": 1.0,
-          "yfov": 0.7,
-          "zfar": 100,
-          "znear": 0.01
-        }
-      },
-      {
-        "name": "camera_1_orthographic",
-        "type": "orthographic",
-        "orthographic": {
-          "xmag": 1.0,
-          "ymag": 1.0,
-          "zfar": 100,
-          "znear": 0.01
-        }
-      }
-    ],
-  
-    "meshes" : [
-      {
-        "name": "test_mesh_0",
-        "primitives" : [ {
-          "attributes" : {
-            "POSITION" : 1
-          },
-          "indices" : 0
-        } ]
-      }
-    ],
-  
-    "buffers" : [
-      {
-        "uri" : "data:application/octet-stream;base64,AAABAAIAAQADAAIAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAA",
-        "byteLength" : 60
-      }
-    ],
-    "bufferViews" : [
-      {
-        "buffer" : 0,
-        "byteOffset" : 0,
-        "byteLength" : 12,
-        "target" : 34963
-      },
-      {
-        "buffer" : 0,
-        "byteOffset" : 12,
-        "byteLength" : 48,
-        "target" : 34962
-      }
-    ],
-    "accessors" : [
-      {
-        "bufferView" : 0,
-        "byteOffset" : 0,
-        "componentType" : 5123,
-        "count" : 6,
-        "type" : "SCALAR",
-        "max" : [ 3 ],
-        "min" : [ 0 ]
-      },
-      {
-        "bufferView" : 1,
-        "byteOffset" : 0,
-        "componentType" : 5126,
-        "count" : 4,
-        "type" : "VEC3",
-        "max" : [ 1.0, 1.0, 0.0 ],
-        "min" : [ 0.0, 0.0, 0.0 ]
-      }
-    ],
-  
-    "asset" : {
-      "version" : "2.0"
+  "scenes": [
+    {
+      "name": "test_scene_0",
+      "nodes": [
+        0,
+        1
+      ]
+    },
+    {
+      "name": "test_scene_1",
+      "nodes": [
+        3,
+        4
+      ]
     }
+  ],
+  "nodes": [
+    {
+      "name": "test_node_0",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "mesh": 0
+    },
+    {
+      "name": "test_node_1",
+      "children": [
+        2
+      ]
+    },
+    {
+      "name": "test_node_2",
+      "translation": [
+        0.5,
+        0.5,
+        3.0
+      ],
+      "camera": 0
+    },
+    {
+      "name": "test_node_3",
+      "translation": [
+        0.5,
+        0.5,
+        3.0
+      ],
+      "camera": 1
+    },
+    {
+      "name": "test_node_4",
+      "translation": [
+        0.0,
+        1.5,
+        0.0
+      ],
+      "mesh": 0
+    }
+  ],
+  "cameras": [
+    {
+      "name": "camera_0_perspective",
+      "type": "perspective",
+      "perspective": {
+        "aspectRatio": 1.0,
+        "yfov": 0.7,
+        "zfar": 100,
+        "znear": 0.01
+      }
+    },
+    {
+      "name": "camera_1_orthographic",
+      "type": "orthographic",
+      "orthographic": {
+        "xmag": 1.0,
+        "ymag": 1.0,
+        "zfar": 100,
+        "znear": 0.01
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "test_mesh_0",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 1
+          },
+          "indices": 0
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,AAABAAIAAQADAAIAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAA",
+      "byteLength": 60
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 12,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 12,
+      "byteLength": 48,
+      "target": 34962
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5123,
+      "count": 6,
+      "type": "SCALAR",
+      "max": [
+        3
+      ],
+      "min": [
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 4,
+      "type": "VEC3",
+      "max": [
+        1.0,
+        1.0,
+        0.0
+      ],
+      "min": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "asset": {
+    "version": "2.0"
   }
+}
